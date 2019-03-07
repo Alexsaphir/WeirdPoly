@@ -69,6 +69,7 @@ std::ostream &operator<<( std::ostream &output, T A )
 }
 
 
+
 struct Monome
 {
 	Monome()
@@ -132,6 +133,7 @@ std::ostream &operator<<( std::ostream &output, const Monome& M )
 }
 
 
+
 struct Polynome
 {
 	Polynome()
@@ -157,6 +159,44 @@ struct Polynome
 		}
 		return res;
 	}
+
+	unsigned long long getMaxMonome(std::initializer_list<T> l) const
+	{
+		std::unique_ptr<T[]> tmp = std::unique_ptr<T[]>( new T[m_nbMonome]);
+
+		for(unsigned long long i=0; i<m_nbMonome; ++i)
+		{
+			tmp[i] = m_coeffMonome[i].first*m_coeffMonome[i].second(l);
+		}
+		return  getMax(tmp);
+	}
+
+private:
+	unsigned long long getMax(const std::unique_ptr<T[]>& l) const
+	{
+		unsigned long long res = 0;
+		bool start(true);
+		T tmp_max;
+
+		for(unsigned long long i=0; i<m_nbMonome; ++i)
+		{
+			if(start)
+			{
+				tmp_max = l[i];
+				start = false;
+			}
+			else
+			{
+				if(tmp_max()< l[i]())
+				{
+					tmp_max = l[i];
+					res = i;
+				}
+			}
+		}
+		return res;
+	}
+
 private:
 	unsigned long long m_nbMonome{0};
 	std::unique_ptr<std::pair<T, Monome>[]> m_coeffMonome{};
@@ -168,7 +208,7 @@ std::ostream &operator<<( std::ostream &output, const Polynome& P )
 {
 
 
-//	std::cout << P.m_nbMonome;
+	//	std::cout << P.m_nbMonome;
 	for(unsigned long long i=0; i<P.m_nbMonome-1; ++i)
 		output << P.m_coeffMonome[i].first;// << "*" << P.m_coeffMonome[i].second << " + ";
 	output << P.m_coeffMonome[P.m_nbMonome - 1].first << "*" << P.m_coeffMonome[P.m_nbMonome - 1].second;
@@ -179,7 +219,7 @@ struct Domain_1D
 {
 	Domain_1D()= default;
 
-	Domain_1D(double inf, double sup, int N): m_inf(inf), m_sup(sup), m_N(N)
+	Domain_1D(double inf, double sup, unsigned long long N): m_inf(inf), m_sup(sup), m_N(N)
 	{
 		if(m_N<1)
 			m_N = 1;
@@ -187,23 +227,26 @@ struct Domain_1D
 			m_sup = m_inf; // Domain == {m_inf}
 
 		m_point = std::unique_ptr<T[]>(new T[m_N]);
+		m_part = std::unique_ptr<unsigned long long[]>(new unsigned long long[m_N]);
 
 		m_point[0] = m_inf;
 		m_point[m_N-1] = m_sup;
 
 		double h = (m_sup - m_inf)/(m_N - 1);
-		for (int i=1; i<m_N-1; ++i)
+		for (unsigned long long i=1; i<m_N-1; ++i)
 		{
 			m_point[i] = m_inf + i*h;
+			m_part[i] = 0;
 		}
 
 	}
 
 	void operator()(const Polynome& P)
 	{
-		for(int i=0; i<m_N; ++i)
+		for(unsigned long long i=0; i<m_N; ++i)
 		{
-			m_point[i] = P({m_point[i]});
+			//m_point[i] = P({m_point[i]});
+			m_part[i] = P.getMaxMonome({m_point[i]});
 		}
 	}
 
@@ -215,10 +258,10 @@ struct Domain_1D
 		double x = m_inf;
 		double h = (m_sup - m_inf)/(m_N - 1);
 
-		for(int i= 0; i<m_N; ++i)
+		for(unsigned long long i= 0; i<m_N; ++i)
 		{
-			myfile << x << " " << m_point[i] << '\n';
-
+			//			myfile << x << " " << m_point[i] << '\n';
+			myfile << x << " " << m_part[i] << '\n';
 			x += h;
 		}
 
@@ -228,9 +271,10 @@ struct Domain_1D
 private:
 	double m_inf{-1.};
 	double m_sup{1.};
-	int m_N{3};
+	unsigned long long m_N{3};
 
 	std::unique_ptr<T[]> m_point{};
+	std::unique_ptr<unsigned long long[]> m_part{};
 
 	friend std::ostream &operator<<( std::ostream &output, const Domain_1D& D );
 };
@@ -238,34 +282,161 @@ private:
 std::ostream &operator<<( std::ostream &output, const Domain_1D& D )
 {
 	output << "[ ";
-	for(int i=0; i<D.m_N-1; ++i)
+	for(unsigned long long i=0; i<D.m_N-1; ++i)
 		output << D.m_point[i] << ", ";
 	output << D.m_point[D.m_N-1];
 	output << " ]";
 	return output;
 }
 
+struct Domain_2D
+{
+	Domain_2D()
+	= default;
+
+	Domain_2D(double inf, double sup, unsigned long long N): m_inf(inf), m_sup(sup), m_N(N)
+	{
+		m_point = std::unique_ptr<std::pair<T,T>[]>(new std::pair<T,T>[m_N*m_N]);
+		m_part = std::unique_ptr<unsigned long long[]>(new unsigned long long[m_N*m_N]);
+
+		double h = (m_sup - m_inf)/(m_N - 1);
+
+		for(unsigned long long i=0; i<m_N; ++i)
+		{
+			for(unsigned long long j=0; j<m_N; ++j)
+			{
+				double x = m_inf + static_cast<double>(i)*h;
+				double y = m_inf + static_cast<double>(j)*h;
+				m_point[i*m_N+ j] = {x,y};
+			}
+		}
+	}
+
+	void operator()(const Polynome& P)
+	{
+#pragma omp parallel for
+		for(unsigned long long i=0; i<m_N*m_N; ++i)
+		{
+			m_part[i] = P.getMaxMonome({m_point[i].first, m_point[i].second});
+		}
+	}
+
+	void saveToFile(const std::string& filename)
+	{
+		std::ofstream myfile;
+		myfile.open(filename, std::ios::trunc);
+
+		unsigned long long current;
+
+		for(unsigned long long j=0; j<m_N; ++j)
+		{
+			for(unsigned long long i=0; i<m_N; ++i)
+			{
+				unsigned long long idx = m_N*i + j;
+
+				if(i == 0)
+				{
+					current = m_part[idx];
+					myfile << m_point[idx].first() << " " << m_point[idx].second() << " " << current << '\n';
+				}
+				else if(i == m_N-1)
+				{
+					myfile << m_point[idx].first() << " " << m_point[idx].second() << " " << m_part[idx] << '\n';
+				}
+				else if (m_part[idx] != current)
+				{
+					myfile << m_point[idx-m_N-1].first() << " " << m_point[idx-m_N-1].second() << " " << current << '\n';
+					current = m_part[idx];
+					myfile << m_point[idx].first() << " " << m_point[idx].second() << " " << current << '\n';
+				}
+				else if(i%5 == 0)
+				{
+					myfile << m_point[idx].first() << " " << m_point[idx].second() << " " << current << '\n';
+				}
+			}
+
+		}
+		myfile.close();
+	}
+
+	void saveToFileHot(const std::string& filename)
+	{
+		std::ofstream myfile;
+		myfile.open(filename, std::ios::trunc);
+
+		for(unsigned long long j=0; j<m_N; ++j)
+		{
+			for(unsigned long long i=0; i<m_N; ++i)
+			{
+				unsigned long long idx = m_N*i + j;
+				myfile << m_part[idx];
+				if(i!=m_N-1)
+					myfile << " ";
+			}
+			myfile <<'\n';
+		}
+		myfile.close();
+	}
+
+	void saveConfig(const std::string& filename)
+	{
+		std::ofstream myfile;
+		myfile.open(filename, std::ios::trunc);
+		myfile << m_inf << " " << m_sup << " " << m_N;
+		myfile.close();
+	}
+
+private:
+	double m_inf{-1.};
+	double m_sup{1.};
+	unsigned long long m_N{3};
+
+	std::unique_ptr<std::pair<T,T>[]> m_point{};
+	std::unique_ptr<unsigned long long[]> m_part{};
+
+
+};
+
 
 
 int main()
 {
-	double h = .05;
-	double binf = -50.;
+	double h = .005;
+	double binf = -10.;
 	double bsup = -binf;
 
-	Polynome P({{-1,{}}, {3,{1}}, {2,{2}}, {1,{3}} });
-	Polynome Q({{-1,{}}, {2,{1}}, {-2,{2}}, {1,{3}} });
+	//Polynome P({{-1,{}}, {3,{1}}, {2,{2}}, {1,{3}} });
+	//Polynome Q({{-1,{}}, {2,{1}}, {-2,{2}}, {1,{3}} });
 
-	Polynome T({{1,{}}, {3,{1}}, {1,{2}} });
+	Polynome P2({{5,{}}, {5,{1}}, {5,{0,1}}, {4,{1,1}}, {1,{0,2}}, {1,{2}} });
+	Polynome Q2({{7,{}}, {4,{1}}, {1,{0,1}}, {4,{1,1}}, {3,{0,2}}, {-3,{2}} });
 
-	Domain_1D D_P(binf, bsup, static_cast<int>((bsup - binf)/h));
-	Domain_1D D_Q(binf, bsup, static_cast<int>((bsup - binf)/h));
 
-	D_P(P);
-	D_Q(Q);
+	Polynome T({{1,{}}, {-1,{1}}, {1,{0,1}}, {-1,{1,1}}, {1,{0,2}}, {-1,{2}},{1,{3}},{-1,{0,3}}, {1,{2,1}}, {-1,{1,2}} });
 
-	D_P.saveToFile(R"(C:\Users\micro\AnacondaProjects\P.dat)");
-	D_Q.saveToFile(R"(C:\Users\micro\AnacondaProjects\Q.dat)");
+	//Domain_1D D_P(binf, bsup, static_cast<int>((bsup - binf)/h));
+	//Domain_1D D_Q(binf, bsup, static_cast<int>((bsup - binf)/h));
+
+	Domain_2D D2_P(binf, bsup, static_cast<int>((bsup - binf)/h));
+	Domain_2D D2_Q(binf, bsup, static_cast<int>((bsup - binf)/h));
+
+	//D_P(P);
+	//D_Q(Q);
+
+	D2_P(P2);
+	D2_Q(Q2);
+
+	//D_P.saveToFile(R"(C:\Users\micro\AnacondaProjects\P.dat)");
+	//D_Q.saveToFile(R"(C:\Users\micro\AnacondaProjects\Q.dat)");
+
+	//D2_P.saveToFile(R"(C:\Users\micro\AnacondaProjects\P2.dat)");
+	D2_P.saveToFileHot(R"(C:\Users\micro\AnacondaProjects\P2H.dat)");
+	D2_Q.saveToFileHot(R"(C:\Users\micro\AnacondaProjects\Q2H.dat)");
+
+
+	D2_Q(T);
+	D2_Q.saveToFileHot(R"(C:\Users\micro\AnacondaProjects\T2H.dat)");
+	D2_Q.saveConfig(R"(C:\Users\micro\AnacondaProjects\config.weird)");
 
 	return 0;
 }
